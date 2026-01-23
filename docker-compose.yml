@@ -1,0 +1,54 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: data-hub-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${TIMESCALEDB_PORT}:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      # - ./src/timescale_setup.sql:/docker-entrypoint-initdb.d/01_setup.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - trading_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: data-hub-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_IMPORT_SERVERS: '/pgadmin4/servers.json'
+    ports:
+      - "${PGADMIN_PORT}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./servers.json:/pgadmin4/servers.json:ro
+      - ./pgpassfile:/tmp/pgpassfile:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - trading_network
+
+volumes:
+  timescaledb_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  trading_network:
+    driver: bridge
