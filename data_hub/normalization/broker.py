@@ -29,14 +29,20 @@ class BrokerNormalizer:
         """
         path_parts = file_path.parts
 
-        # Look for broker in parent directory names
-        # Skip common non-broker directories
-        skip_dirs = {"data", "csv", "historical", "metatrader", "mt4", "mt5", "exports"}
+        # Find the directory immediately after "data"
+        # This is the broker name in the structure: data/BROKER/[SYMBOL/]file.csv
+        try:
+            data_index = None
+            for i, part in enumerate(path_parts):
+                if part.lower() == "data":
+                    data_index = i
+                    break
 
-        for part in reversed(path_parts[:-1]):  # Exclude filename
-            cleaned = part.lower().strip()
-            if cleaned and cleaned not in skip_dirs:
-                return self._clean_broker_name(part)
+            if data_index is not None and data_index + 1 < len(path_parts) - 1:
+                broker_part = path_parts[data_index + 1]
+                return self._clean_broker_name(broker_part)
+        except Exception as e:
+            logger.warning(f"Error extracting broker from path {file_path}: {e}")
 
         logger.debug(f"No broker detected in path {file_path}, using 'unknown'")
         return "unknown"
