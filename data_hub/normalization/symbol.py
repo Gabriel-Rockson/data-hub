@@ -90,12 +90,17 @@ class SymbolNormalizer:
         "YM": Symbol.US30,
         "NAS100": Symbol.NAS100,
         "NAS100.": Symbol.NAS100,
+        "US100": Symbol.NAS100,
+        "US100.": Symbol.NAS100,
         "NASDAQ": Symbol.NAS100,
         "NDX": Symbol.NAS100,
         "NQ": Symbol.NAS100,
+        "USTEC": Symbol.NAS100,
         "SPX500": Symbol.SPX500,
         "SPX500.": Symbol.SPX500,
         "SP500": Symbol.SPX500,
+        "US500": Symbol.SPX500,
+        "US500.": Symbol.SPX500,
         "SPX": Symbol.SPX500,
         "ES": Symbol.SPX500,
         "GER40": Symbol.GER40,
@@ -146,10 +151,12 @@ class SymbolNormalizer:
 
         Returns:
             Normalized symbol name (Symbol enum value)
+
+        Raises:
+            ValueError: If symbol cannot be normalized
         """
         if not symbol:
-            logger.warning("Empty symbol provided")
-            return Symbol.XAUUSD.value
+            raise ValueError("Empty symbol provided")
 
         cleaned_symbol = symbol.strip().upper()
 
@@ -175,11 +182,12 @@ class SymbolNormalizer:
         if normalized:
             return normalized.value
 
-        if cleaned_symbol not in self.unmapped_symbols:
-            self.unmapped_symbols.add(cleaned_symbol)
-            logger.warning(f"Unmapped symbol: '{symbol}' - defaulting to XAUUSD")
-
-        return Symbol.XAUUSD.value
+        self.unmapped_symbols.add(cleaned_symbol)
+        raise ValueError(
+            f"Cannot normalize symbol '{symbol}'. "
+            f"Symbol not found in mappings. "
+            f"Add mapping for '{cleaned_symbol}' to SYMBOL_MAPPINGS or use add_symbol_mapping()."
+        )
 
     def _pattern_match(self, symbol: str) -> Symbol | None:
         """

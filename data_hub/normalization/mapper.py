@@ -48,32 +48,30 @@ class DataNormalizer:
 
         Returns:
             Dict with normalized broker, symbol, and timeframe
+
+        Raises:
+            ValueError: If normalization fails for any field
         """
-        try:
-            if broker_override:
-                broker = self.broker_normalizer.normalize_name(broker_override)
-                logger.debug(f"Using broker override: '{broker_override}' -> '{broker}'")
-            else:
-                broker = self.broker_normalizer.normalize_from_path(file_path)
-                logger.debug(f"Detected broker from path: '{broker}'")
+        if broker_override:
+            broker = self.broker_normalizer.normalize_name(broker_override)
+            logger.debug(f"Using broker override: '{broker_override}' -> '{broker}'")
+        else:
+            broker = self.broker_normalizer.normalize_from_path(file_path)
+            logger.debug(f"Detected broker from path: '{broker}'")
 
-            symbol = self.symbol_normalizer.normalize(raw_symbol, broker)
-            logger.debug(f"Normalized symbol: '{raw_symbol}' -> '{symbol}'")
+        symbol = self.symbol_normalizer.normalize(raw_symbol, broker)
+        logger.debug(f"Normalized symbol: '{raw_symbol}' -> '{symbol}'")
 
-            timeframe = self.timeframe_normalizer.normalize(raw_timeframe)
-            logger.debug(f"Normalized timeframe: '{raw_timeframe}' -> '{timeframe}'")
+        timeframe = self.timeframe_normalizer.normalize(raw_timeframe)
+        logger.debug(f"Normalized timeframe: '{raw_timeframe}' -> '{timeframe}'")
 
-            result = {"broker": broker, "symbol": symbol, "timeframe": timeframe}
+        result = {"broker": broker, "symbol": symbol, "timeframe": timeframe}
 
-            logger.info(
-                f"Normalized metadata: {raw_symbol}/{raw_timeframe} -> "
-                f"{symbol}/{timeframe} @ {broker}"
-            )
-            return result
-
-        except Exception as e:
-            logger.error(f"Error normalizing metadata: {e}")
-            return {"broker": "unknown", "symbol": "XAUUSD", "timeframe": "h1"}
+        logger.info(
+            f"Normalized metadata: {raw_symbol}/{raw_timeframe} -> "
+            f"{symbol}/{timeframe} @ {broker}"
+        )
+        return result
 
     def normalize_for_database(
         self,
