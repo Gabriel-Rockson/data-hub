@@ -19,3 +19,13 @@ class MarketData(Base):
     volume = Column(BigInteger, default=0)
     tick_volume = Column(BigInteger, default=0)
     spread = Column(Integer, default=0)
+
+
+class Tick(Base):
+    __tablename__ = "ticks"
+
+    time = Column(TIMESTAMP(timezone=True), primary_key=True, nullable=False)
+    broker = Column(String(20), primary_key=True, nullable=False)
+    symbol = Column(String(20), primary_key=True, nullable=False)
+    bid = Column(Numeric(12, 6), nullable=False)
+    ask = Column(Numeric(12, 6), nullable=False)

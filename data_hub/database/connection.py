@@ -120,6 +120,58 @@ class DatabaseManager:
         except Exception as e:
             logger.warning(f"Compression setup failed (this is normal if already configured): {e}")
 
+    def create_tick_hypertable(self) -> None:
+        """Create TimescaleDB hypertable and indexes for the ticks table."""
+        try:
+            with self.engine.connect() as conn:
+                check_sql = text("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM timescaledb_information.hypertables
+                        WHERE hypertable_name = 'ticks'
+                    );
+                """)
+                if not conn.execute(check_sql).scalar():
+                    conn.execute(text("""
+                        SELECT create_hypertable('ticks', 'time',
+                            chunk_time_interval => INTERVAL '1 week',
+                            if_not_exists => TRUE
+                        );
+                    """))
+                    logger.info("ticks hypertable created")
+                else:
+                    logger.info("ticks hypertable already exists")
+
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_ticks_symbol_broker_time
+                    ON ticks (symbol, broker, time ASC);
+                """))
+                conn.commit()
+                logger.info("ticks indexes created")
+
+        except Exception as e:
+            logger.error(f"Error creating ticks hypertable: {e}")
+            raise
+
+    def setup_tick_compression(self) -> None:
+        """Setup TimescaleDB compression on the ticks table."""
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("""
+                    ALTER TABLE ticks SET (
+                        timescaledb.compress,
+                        timescaledb.compress_segmentby = 'symbol, broker',
+                        timescaledb.compress_orderby = 'time ASC'
+                    );
+                """))
+                conn.execute(text("""
+                    SELECT add_compression_policy('ticks', INTERVAL '2 weeks', if_not_exists => TRUE);
+                """))
+                conn.commit()
+                logger.info("ticks compression configured")
+
+        except Exception as e:
+            logger.warning(f"ticks compression setup failed (may already be configured): {e}")
+
     @contextmanager
     def get_session(self) -> Generator[sessionmaker]:
         """Get a database session with automatic cleanup"""
