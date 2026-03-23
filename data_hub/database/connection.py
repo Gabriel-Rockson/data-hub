@@ -134,19 +134,16 @@ class DatabaseManager:
                     conn.execute(text("""
                         SELECT create_hypertable('ticks', 'time',
                             chunk_time_interval => INTERVAL '1 week',
-                            if_not_exists => TRUE
+                            if_not_exists => TRUE,
+                            create_default_indexes => FALSE
                         );
                     """))
                     logger.info("ticks hypertable created")
                 else:
                     logger.info("ticks hypertable already exists")
 
-                conn.execute(text("""
-                    CREATE INDEX IF NOT EXISTS idx_ticks_symbol_broker_time
-                    ON ticks (symbol, broker, time ASC);
-                """))
                 conn.commit()
-                logger.info("ticks indexes created")
+                logger.info("ticks hypertable ready")
 
         except Exception as e:
             logger.error(f"Error creating ticks hypertable: {e}")
@@ -164,7 +161,7 @@ class DatabaseManager:
                     );
                 """))
                 conn.execute(text("""
-                    SELECT add_compression_policy('ticks', INTERVAL '2 weeks', if_not_exists => TRUE);
+                    SELECT add_compression_policy('ticks', INTERVAL '2 days', if_not_exists => TRUE);
                 """))
                 conn.commit()
                 logger.info("ticks compression configured")
