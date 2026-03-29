@@ -23,9 +23,12 @@ logger = logging.getLogger(__name__)
 
 BROKER = "exness"
 
-# Strip trailing 'm' from Exness mini/market symbols
 def _normalize_symbol(raw: str) -> str:
     s = raw.upper()
+    # Strip Exness suffixes: "_RAW_SPREAD", "_RAW", trailing "M"
+    for suffix in ("_RAW_SPREAD", "_RAW"):
+        if s.endswith(suffix):
+            return s[: -len(suffix)]
     if s.endswith("M"):
         return s[:-1]
     return s
