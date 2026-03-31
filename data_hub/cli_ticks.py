@@ -13,7 +13,7 @@ from pathlib import Path
 from .config import settings
 from .database.connection import DatabaseManager
 from .database.models import Base
-from .ingestion.exness_tick_importer import stream_ticks
+from .ingestion.exness_tick_importer import stream_chunks
 from .ingestion.tick_batch_processor import TickBatchProcessor
 
 logging.basicConfig(
@@ -64,7 +64,7 @@ Examples:
         return 1
 
     if args.dry_run:
-        count = sum(1 for _ in stream_ticks(path))
+        count = sum(len(chunk) for chunk in stream_chunks(path))
         logger.info(f"Dry run: {count:,} ticks found (nothing inserted)")
         return 0
 
@@ -80,7 +80,7 @@ Examples:
     with db_manager.get_session() as session:
         processor = TickBatchProcessor(session, args.batch_size)
         processor.optimize_for_bulk()
-        stats = processor.process_ticks(stream_ticks(path))
+        stats = processor.process_ticks(stream_chunks(path))
         processor.reset_optimizations()
 
     logger.info(

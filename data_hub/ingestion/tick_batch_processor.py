@@ -9,12 +9,13 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..models.tick_data import TickData
-
 logger = logging.getLogger(__name__)
+
+_TEMP_TABLE = "temp_ticks_bulk"
 
 
 class TickBatchProcessor:
@@ -22,11 +23,7 @@ class TickBatchProcessor:
         self.db_session = db_session
         self.batch_size = batch_size
 
-    def process_ticks(
-        self,
-        ticks: Iterator[TickData],
-        dry_run: bool = False,
-    ) -> dict[str, Any]:
+    def process_ticks(self, chunks: Iterator[pd.DataFrame]) -> dict[str, Any]:
         stats: dict[str, Any] = {
             "total_processed": 0,
             "total_inserted": 0,
@@ -34,21 +31,34 @@ class TickBatchProcessor:
             "start_time": datetime.now(),
         }
 
-        batch: list[TickData] = []
-
+        self._create_temp_table()
+        chunk_num = 0
         try:
-            for tick in ticks:
-                batch.append(tick)
-                if len(batch) >= self.batch_size:
-                    self._flush(batch, dry_run, stats)
-                    batch = []
-
-            if batch:
-                self._flush(batch, dry_run, stats)
-
+            for chunk in chunks:
+                chunk_num += 1
+                logger.info(f"Chunk {chunk_num}: parsed {len(chunk):,} ticks, inserting...")
+                t0 = time.perf_counter()
+                try:
+                    inserted = self._bulk_copy(chunk)
+                    elapsed = time.perf_counter() - t0
+                    stats["total_processed"] += len(chunk)
+                    stats["total_inserted"] += inserted
+                    total_elapsed = (datetime.now() - stats["start_time"]).total_seconds()
+                    rate = stats["total_processed"] / total_elapsed if total_elapsed > 0 else 0
+                    logger.info(
+                        f"Chunk {chunk_num}: inserted {inserted:,} in {elapsed:.1f}s "
+                        f"— total {stats['total_processed']:,} ticks "
+                        f"@ {rate:,.0f} ticks/sec"
+                    )
+                except Exception as e:
+                    logger.error(f"Chunk {chunk_num}: insert failed: {e}")
+                    stats["total_errors"] += len(chunk)
+                    self.db_session.rollback()
         except Exception as e:
             stats["fatal_error"] = str(e)
             logger.error(f"Fatal error in tick batch processing: {e}")
+        finally:
+            self._drop_temp_table()
 
         stats["end_time"] = datetime.now()
         duration = (stats["end_time"] - stats["start_time"]).total_seconds()
@@ -63,30 +73,9 @@ class TickBatchProcessor:
         )
         return stats
 
-    def _flush(self, batch: list[TickData], dry_run: bool, stats: dict[str, Any]) -> None:
-        stats["total_processed"] += len(batch)
-        if dry_run:
-            stats["total_inserted"] += len(batch)
-            return
-        try:
-            inserted = self._bulk_copy(batch)
-            stats["total_inserted"] += inserted
-            logger.debug(f"Inserted {inserted:,} ticks ({len(batch) - inserted} duplicates)")
-        except Exception as e:
-            logger.error(f"Batch insert failed: {e}")
-            stats["total_errors"] += len(batch)
-            self.db_session.rollback()
-
-    def _bulk_copy(self, batch: list[TickData]) -> int:
-        rows = "\n".join(
-            f"{t.timestamp.isoformat()}\t{t.broker}\t{t.symbol}\t{t.bid}\t{t.ask}"
-            for t in batch
-        )
-
-        temp = f"temp_ticks_{int(time.time() * 1000)}"
-
+    def _create_temp_table(self) -> None:
         self.db_session.execute(text(f"""
-            CREATE TEMP TABLE {temp} (
+            CREATE TEMP TABLE IF NOT EXISTS {_TEMP_TABLE} (
                 time TIMESTAMPTZ,
                 broker VARCHAR(20),
                 symbol VARCHAR(20),
@@ -95,25 +84,32 @@ class TickBatchProcessor:
             )
         """))
 
+    def _drop_temp_table(self) -> None:
+        self.db_session.execute(text(f"DROP TABLE IF EXISTS {_TEMP_TABLE}"))
+
+    def _bulk_copy(self, chunk: pd.DataFrame) -> int:
+        self.db_session.execute(text(f"TRUNCATE {_TEMP_TABLE}"))
+
+        buf = io.StringIO()
+        chunk.to_csv(buf, header=False, index=False, sep="\t")
+        buf.seek(0)
+
         conn = self.db_session.connection()
         raw = conn.connection
         with raw.cursor() as cur:
             cur.copy_expert(
-                f"COPY {temp} (time, broker, symbol, bid, ask) "  # noqa: S608
+                f"COPY {_TEMP_TABLE} (time, broker, symbol, bid, ask) "  # noqa: S608
                 "FROM STDIN WITH (FORMAT text, DELIMITER E'\\t')",
-                io.StringIO(rows),
+                buf,
             )
 
         result = self.db_session.execute(text(f"""
             INSERT INTO ticks (time, broker, symbol, bid, ask)
-            SELECT time, broker, symbol, bid, ask FROM {temp}
+            SELECT time, broker, symbol, bid, ask FROM {_TEMP_TABLE}
             ON CONFLICT (time, broker, symbol) DO NOTHING
         """))  # noqa: S608
-        inserted = result.rowcount
-
-        self.db_session.execute(text(f"DROP TABLE {temp}"))
         self.db_session.commit()
-        return inserted
+        return result.rowcount
 
     def optimize_for_bulk(self) -> None:
         for setting in [
