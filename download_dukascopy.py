@@ -8,13 +8,15 @@ memory usage bounded.
 Usage:
     cd data-hub
     .venv/bin/python download_dukascopy.py --symbol XAUUSD
-    .venv/bin/python download_dukascopy.py --symbol NAS100 --start-year 2020
-    .venv/bin/python download_dukascopy.py --symbol EURUSD --end-date 2024-12-31 --dry-run
+    .venv/bin/python download_dukascopy.py --symbol NAS100 --from 2020-01-01
+    .venv/bin/python download_dukascopy.py --symbol EURUSD --from 2020-01-01 --to 2024-12-31 --dry-run
 """
 
 import argparse
 import logging
+import random
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
@@ -43,6 +45,7 @@ TIMEFRAMES: list[tuple[str, str | None]] = [
     ("M1", None),
     ("M5", "5min"),
     ("M15", "15min"),
+    ("M30", "30min"),
     ("H1", "1h"),
     ("H4", "4h"),
     ("D1", "1D"),
@@ -51,19 +54,20 @@ TIMEFRAMES: list[tuple[str, str | None]] = [
 ]
 
 DEFAULT_START = date(2000, 1, 1)
-WORKERS = 8
+WORKERS = 4
 
 
 def _fetch_one(instrument: str, multiplier: int, day: date) -> tuple[date, list[BarData]]:
     """Fetch and parse a single day. Returns (day, bars) — bars is empty on no data."""
+    time.sleep(random.uniform(0, 0.5))
     raw = _fetch_day_raw(instrument, day.year, day.month, day.day)
     bars = _parse_day(raw, day, multiplier) if raw else []
     return day, bars
 
 
-def download_year(symbol: str, instrument: str, multiplier: int, year: int, end_date: date) -> list[BarData]:
-    """Download all M1 bars for a given year in parallel, up to end_date."""
-    start = max(date(year, 1, 1), DEFAULT_START)
+def download_year(symbol: str, instrument: str, multiplier: int, year: int, start_date: date, end_date: date) -> list[BarData]:
+    """Download all M1 bars for a given year in parallel, clipped to [start_date, end_date]."""
+    start = max(date(year, 1, 1), start_date)
     end = min(date(year, 12, 31), end_date)
 
     days = []
@@ -108,6 +112,7 @@ def insert_bars(processor: BatchProcessor, bars: list[BarData], symbol: str, tim
 
 def process_year(
     year: int,
+    start_date: date,
     end_date: date,
     symbol: str,
     instrument: str,
@@ -116,7 +121,7 @@ def process_year(
     dry_run: bool,
 ) -> None:
     """Download M1, resample to all target timeframes, and insert."""
-    m1_bars = download_year(symbol, instrument, multiplier, year, end_date)
+    m1_bars = download_year(symbol, instrument, multiplier, year, start_date, end_date)
     if not m1_bars:
         logger.info(f"{year}: no bars, skipping")
         return
@@ -137,13 +142,15 @@ def main() -> int:
         help=f"One or more symbols to download. Supported: {', '.join(sorted(INSTRUMENT_MAP))}",
     )
     parser.add_argument(
-        "--start-year",
-        type=int,
-        default=DEFAULT_START.year,
-        help=f"First year to download. Default: {DEFAULT_START.year}",
+        "--from",
+        dest="start",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help=f"First date to download (inclusive). Default: {DEFAULT_START}",
     )
     parser.add_argument(
-        "--end-date",
+        "--to",
+        dest="end",
         default=None,
         metavar="YYYY-MM-DD",
         help="Last date to download (inclusive). Default: yesterday",
@@ -159,13 +166,16 @@ def main() -> int:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    end_date = (
-        date.fromisoformat(args.end_date)
-        if args.end_date
-        else date.today() - timedelta(days=1)
-    )
-    start_year = args.start_year
-    end_year = end_date.year
+    try:
+        start_date = date.fromisoformat(args.start) if args.start else DEFAULT_START
+        end_date = date.fromisoformat(args.end) if args.end else date.today() - timedelta(days=1)
+    except ValueError as e:
+        logger.error(f"Invalid date: {e}")
+        return 1
+
+    if start_date > end_date:
+        logger.error(f"--from {start_date} is after --to {end_date}")
+        return 1
 
     # Validate all symbols up front before touching the DB
     symbols: list[tuple[str, str, int]] = []  # (symbol, instrument, multiplier)
@@ -179,13 +189,16 @@ def main() -> int:
 
     timeframe_names = [tf for tf, _ in TIMEFRAMES]
     symbol_names = [s for s, _, _ in symbols]
-    logger.info(f"Symbols: {symbol_names}  [{start_year} → {end_date}]  broker={BROKER}  dry_run={args.dry_run}")
+    logger.info(f"Symbols: {symbol_names}  [{start_date} → {end_date}]  broker={BROKER}  dry_run={args.dry_run}")
     logger.info(f"Timeframes: {timeframe_names}")
+
+    start_year = start_date.year
+    end_year = end_date.year
 
     if args.dry_run:
         for symbol, instrument, multiplier in symbols:
             for year in range(start_year, end_year + 1):
-                m1_bars = download_year(symbol, instrument, multiplier, year, end_date)
+                m1_bars = download_year(symbol, instrument, multiplier, year, start_date, end_date)
                 for tf, rule in TIMEFRAMES:
                     bars = m1_bars if rule is None else _resample_bars(m1_bars, rule)
                     logger.info(f"{symbol} {year} {tf}: {len(bars)} bars (dry run)")
@@ -208,7 +221,7 @@ def main() -> int:
             logger.info(f"--- {symbol} ---")
             for year in range(start_year, end_year + 1):
                 try:
-                    process_year(year, end_date, symbol, instrument, multiplier, processor, dry_run=False)
+                    process_year(year, start_date, end_date, symbol, instrument, multiplier, processor, dry_run=False)
                 except KeyboardInterrupt:
                     logger.warning("Interrupted")
                     processor.reset_optimizations()

@@ -13,8 +13,8 @@ Prices are converted to float by dividing by the instrument's point multiplier.
 
 import logging
 import lzma
+import random
 import struct
-import time
 import time
 import urllib.error
 import urllib.request
@@ -154,16 +154,20 @@ _RECORD_SIZE = 24
 _RECORD_FORMAT = ">IIIIIf"  # time_ms, open, high, low, close, volume
 
 
+_RETRY_DELAYS = [3, 10, 30]  # seconds between attempts; jitter added on top
+
+
 def _fetch_day_raw(instrument: str, year: int, month: int, day: int) -> bytes | None:
     """
     Fetch and LZMA-decompress one day's M1 bi5 candle file.
 
     Dukascopy URLs use 0-indexed months (January = 00, December = 11).
     Returns decompressed bytes, or None if unavailable (weekend/holiday/404).
-    Retries up to 3 times on 503 with exponential backoff.
+    Retries up to 3 times on transient errors with increasing backoff.
     """
     url = f"{_BASE_URL}/{instrument}/{year}/{month - 1:02d}/{day:02d}/BID_candles_min_1.bi5"
-    for attempt in range(3):
+    label = f"{instrument} {year}-{month:02d}-{day:02d}"
+    for attempt in range(len(_RETRY_DELAYS) + 1):
         try:
             with urllib.request.urlopen(url, timeout=30) as resp:
                 compressed = resp.read()
@@ -173,16 +177,20 @@ def _fetch_day_raw(instrument: str, year: int, month: int, day: int) -> bytes | 
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
-            if e.code == 503 and attempt < 2:
-                time.sleep(2 ** attempt)
+            if attempt < len(_RETRY_DELAYS):
+                delay = _RETRY_DELAYS[attempt] + random.uniform(0, 2)
+                logger.debug(f"HTTP {e.code} fetching {label}, retrying in {delay:.1f}s (attempt {attempt + 1})")
+                time.sleep(delay)
                 continue
-            logger.warning(f"HTTP {e.code} fetching {instrument} {year}-{month:02d}-{day:02d}: {e}")
+            logger.warning(f"HTTP {e.code} fetching {label}: {e}")
             return None
         except (urllib.error.URLError, TimeoutError) as e:
-            if attempt < 2:
-                time.sleep(2 ** attempt)
+            if attempt < len(_RETRY_DELAYS):
+                delay = _RETRY_DELAYS[attempt] + random.uniform(0, 2)
+                logger.debug(f"Network error fetching {label}, retrying in {delay:.1f}s (attempt {attempt + 1}): {e}")
+                time.sleep(delay)
                 continue
-            logger.warning(f"URL error fetching {instrument} {year}-{month:02d}-{day:02d}: {e}")
+            logger.warning(f"URL error fetching {label}: {e}")
             return None
         except lzma.LZMAError:
             return None
