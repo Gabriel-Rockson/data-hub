@@ -128,10 +128,12 @@ Examples:
         stats = processor.process_bars(bars, symbol, timeframe, BROKER)
         processor.reset_optimizations()
 
+    skipped = stats.get("total_skipped", 0)
+    skipped_msg = f", {skipped:,} synthetic bars excluded" if skipped else ""
     logger.info(
-        f"Done: {stats['total_processed']} processed, "
-        f"{stats['total_inserted']} inserted, "
-        f"{stats['total_errors']} errors"
+        f"Done: {stats['total_processed']:,} processed, "
+        f"{stats['total_inserted']:,} inserted, "
+        f"{stats['total_errors']} errors{skipped_msg}"
     )
     return 0 if stats["total_errors"] == 0 else 1
 

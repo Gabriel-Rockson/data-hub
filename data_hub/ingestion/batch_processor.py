@@ -61,8 +61,13 @@ class BatchProcessor:
         current_batch = []
         records_processed = 0
 
+        stats["total_skipped"] = 0
+
         try:
             for bar in bars:
+                if self._is_synthetic_bar(bar):
+                    stats["total_skipped"] += 1
+                    continue
                 current_batch.append(bar)
                 records_processed += 1
 
@@ -103,9 +108,12 @@ class BatchProcessor:
                 else 0
             )
 
+            skipped = stats.get("total_skipped", 0)
+            skipped_msg = f", {skipped:,} synthetic bars skipped" if skipped else ""
             logger.info(
-                f"Batch processing completed: {stats['total_processed']} processed, "
-                f"{stats['total_inserted']} inserted, {stats['total_errors']} errors"
+                f"Batch processing completed: {stats['total_processed']:,} processed, "
+                f"{stats['total_inserted']:,} inserted, "
+                f"{stats['total_errors']} errors{skipped_msg}"
             )
 
         except Exception as e:
@@ -113,6 +121,16 @@ class BatchProcessor:
             logger.error(f"Fatal error in batch processing: {e}")
 
         return stats
+
+    def _is_synthetic_bar(self, bar: BarData) -> bool:
+        """Reject placeholder bars inserted by data providers during weekends or daily rollovers."""
+        dow = bar.timestamp.weekday()  # 5=Saturday, 6=Sunday
+        if dow >= 5:
+            return True
+        tick_vol = bar.tick_volume if bar.tick_volume is not None else 0
+        if tick_vol == 0 and bar.high == bar.low == bar.open:
+            return True
+        return False
 
     def _process_batch(
         self, bars: list[BarData], symbol: str, timeframe: str, broker: str, dry_run: bool
