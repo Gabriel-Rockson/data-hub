@@ -93,6 +93,28 @@ docker compose exec timescaledb psql -U postgres -d market_data -c \
   "SELECT * FROM market_data ORDER BY time DESC LIMIT 10;"
 ```
 
+## Getting Data (Dukascopy)
+
+Dukascopy provides free historical data for FX, metals, indices, and crypto without requiring an account.
+
+```bash
+# Download all timeframes for a single symbol (from 2000-01-01 by default)
+.venv/bin/python download_dukascopy.py --symbol XAUUSD
+
+# Multiple symbols at once
+.venv/bin/python download_dukascopy.py --symbol XAUUSD EURUSD GBPUSD
+
+# Specify a date range
+.venv/bin/python download_dukascopy.py --symbol NAS100 --from 2020-01-01 --to 2024-12-31
+
+# Preview without inserting into the database
+.venv/bin/python download_dukascopy.py --symbol XAUUSD --from 2023-01-01 --dry-run
+```
+
+Data is fetched from Dukascopy's public feed, resampled from M1 up to W1 and MN1, and stored under broker `dukascopy`. All timeframes (M1, M5, M15, M30, H1, H4, D1, W1, MN1) are inserted in one pass per year.
+
+**Supported symbols:** XAUUSD, XAGUSD, EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD, NZDUSD, NAS100, US30, SPX500, DAX40, AUS200, BTCUSD, ETHUSD, and all major FX crosses. Run with `--help` to see the full list.
+
 ## Performance
 
 - Uses PostgreSQL COPY for bulk inserts (~15k records/sec)
