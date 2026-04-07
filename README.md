@@ -6,7 +6,7 @@ MT5 CSV ingestion to TimescaleDB.
 
 ```bash
 pip install -e .
-cp .env.example .env
+cp env.example .env
 # Edit .env with DB credentials
 
 # Start TimescaleDB
